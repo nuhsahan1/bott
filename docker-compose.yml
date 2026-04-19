@@ -1,0 +1,166 @@
+version: '3.8'
+
+services:
+  # PostgreSQL - Event Store
+  postgres:
+    image: postgres:15-alpine
+    container_name: bott_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: bott
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis - Session Store
+  redis:
+    image: redis:7-alpine
+    container_name: bott_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Gateway Service
+  gateway:
+    build:
+      context: ./services/gateway
+      dockerfile: Dockerfile
+    container_name: bott_gateway
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/bott
+      - REDIS_URL=redis://redis:6379/0
+      - FLOW_ENGINE_URL=http://flow-engine:8002
+      - LOG_LEVEL=INFO
+      - ENV=development
+      - DEBUG=true
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/gateway/app:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Bot Registry Service
+  registry:
+    build:
+      context: ./services/registry
+      dockerfile: Dockerfile
+    container_name: bott_registry
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/bott
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=INFO
+      - ENV=development
+    ports:
+      - "8001:8001"
+    depends_on:
+      - postgres
+    volumes:
+      - ./services/registry:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+
+  # Flow Engine Service
+  flow-engine:
+    build:
+      context: ./services/flow-engine
+      dockerfile: Dockerfile
+    container_name: bott_flow_engine
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=INFO
+      - ENV=development
+    ports:
+      - "8002:8002"
+    depends_on:
+      - redis
+    volumes:
+      - ./services/flow-engine:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8002 --reload
+
+  # Template Service
+  template-service:
+    build:
+      context: ./services/template-service
+      dockerfile: Dockerfile
+    container_name: bott_template_service
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./services/template-service:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8003 --reload
+
+  # Response Dispatcher Service
+  dispatcher:
+    build:
+      context: ./services/dispatcher
+      dockerfile: Dockerfile
+    container_name: bott_dispatcher
+    environment:
+      - LOG_LEVEL=INFO
+      - ENV=development
+    ports:
+      - "8004:8004"
+    volumes:
+      - ./services/dispatcher:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8004 --reload
+
+  # Analytics Service
+  analytics:
+    build:
+      context: ./services/analytics
+      dockerfile: Dockerfile
+    container_name: bott_analytics
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/bott
+      - LOG_LEVEL=INFO
+      - ENV=development
+    ports:
+      - "8005:8005"
+    depends_on:
+      - postgres
+    volumes:
+      - ./services/analytics:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8005 --reload
+
+  # Admin Panel Service
+  admin-panel:
+    build:
+      context: ./services/admin-panel
+      dockerfile: Dockerfile
+    container_name: bott_admin_panel
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/bott
+      - LOG_LEVEL=INFO
+      - ENV=development
+    ports:
+      - "8006:8006"
+    depends_on:
+      - postgres
+    volumes:
+      - ./services/admin-panel:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8006 --reload
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: bott_network
